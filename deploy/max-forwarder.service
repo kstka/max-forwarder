@@ -1,0 +1,60 @@
+# systemd unit for the MAX -> Telegram forwarder.
+#
+# Deployment layout assumed by this unit:
+#   /opt/max-forwarder            project root (git checkout)
+#   /opt/max-forwarder/.venv      Python 3.14 virtualenv with requirements.txt
+#   /opt/max-forwarder/config.py  filled-in configuration (gitignored)
+#   /opt/max-forwarder/data/      browser profile, state, downloads, logs
+#
+# Restart policy contract (see INSTALL.md for full rules):
+#   exit 0    -> admin was notified or run finished cleanly -> stay down
+#   exit 130  -> SIGINT (Ctrl-C)                            -> stay down
+#   exit 143  -> SIGTERM (systemctl stop / docker stop)     -> stay down
+#   exit 1+   -> unhandled crash, OOM, Selenium died        -> restart
+#   SIGKILL   -> exit 137                                   -> restart
+#
+# Install:
+#   sudo cp deploy/max-forwarder.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now max-forwarder
+#   journalctl -u max-forwarder -f
+
+[Unit]
+Description=MAX -> Telegram forwarder
+After=network-online.target
+Wants=network-online.target
+
+# Prevent restart hammering if Chrome refuses to start in a tight loop:
+# after 5 starts within 5 minutes the unit is marked failed and stays
+# down until manual `systemctl reset-failed && start`.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=max-forwarder
+Group=max-forwarder
+WorkingDirectory=/opt/max-forwarder
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/max-forwarder/.venv/bin/python /opt/max-forwarder/main.py --headless
+
+# Only restart on real failures; exit 0/130/143 are graceful.
+Restart=on-failure
+RestartSec=10s
+SuccessExitStatus=0 130 143
+
+# Hardening: drop privileges and limit FS writes to data/.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/max-forwarder/data
+# NOTE: ProtectHome=true is deliberately NOT set -- Chrome's crashpad /
+# xdg-mime helpers touch $HOME asynchronously ~1-2 s after start and
+# kill the browser ("Chrome instance exited") when /home is hidden.
+
+# Logs go to journald; loguru still rotates files inside data/logs/.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

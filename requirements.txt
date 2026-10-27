@@ -1,0 +1,4 @@
+selenium>=4.20,<5
+loguru>=0.7,<0.8
+python-telegram-bot>=21,<22
+requests>=2.31,<3
